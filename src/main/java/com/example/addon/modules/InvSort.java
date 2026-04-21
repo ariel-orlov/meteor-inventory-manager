@@ -3,6 +3,7 @@ package com.example.addon.modules;
 import com.example.addon.AddonTemplate;
 import meteordevelopment.meteorclient.mixininterface.ISlot;
 import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
@@ -35,11 +36,30 @@ import java.util.List;
  * dispensers, droppers, hoppers (server-safe via configurable delay).
  */
 public class InvSort extends Module {
-    private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
+    // ── Sort mode enum ─────────────────────────────────────────────────────
+
+    public enum SortMode {
+        REGISTRY("Registry ID"),   // deterministic order based on item registry path
+        NAME("Display Name"),      // alphabetical by translated item name
+        COUNT("Stack Count");      // largest stacks placed first
+
+        private final String label;
+        SortMode(String label) { this.label = label; }
+
+        @Override
+        public String toString() { return label; }
+    }
+
+    // ── Settings ───────────────────────────────────────────────────────────
+
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgSort    = settings.createGroup("Sort Behaviour");
+
+    // General
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
-        .description("Ticks between inventory actions. Raise this on servers with anti-cheat (4–6 is safe).")
+        .description("Ticks between inventory actions. Raise this on servers with anti-cheat (4-6 is safe).")
         .defaultValue(2)
         .min(0)
         .sliderMax(20)
@@ -55,10 +75,45 @@ public class InvSort extends Module {
 
     private final Setting<Boolean> sortPlayer = sgGeneral.add(new BoolSetting.Builder()
         .name("sort-player")
-        .description("Sort your main inventory (hotbar excluded).")
+        .description("Sort your main inventory.")
         .defaultValue(true)
         .build()
     );
+
+    private final Setting<Boolean> sortHotbar = sgGeneral.add(new BoolSetting.Builder()
+        .name("sort-hotbar")
+        .description("Include hotbar slots in the player inventory sort.")
+        .defaultValue(false)
+        .visible(sortPlayer::get)
+        .build()
+    );
+
+    // Sort behaviour — stackOnly must be declared before sortMode/reverseSort
+    // so their visible() lambdas can reference it safely.
+    private final Setting<Boolean> stackOnly = sgSort.add(new BoolSetting.Builder()
+        .name("stack-only")
+        .description("Only merge partial stacks; skip reordering entirely.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<SortMode> sortMode = sgSort.add(new EnumSetting.Builder<SortMode>()
+        .name("sort-mode")
+        .description("Primary criterion used to order items.")
+        .defaultValue(SortMode.REGISTRY)
+        .visible(() -> !stackOnly.get())
+        .build()
+    );
+
+    private final Setting<Boolean> reverseSort = sgSort.add(new BoolSetting.Builder()
+        .name("reverse")
+        .description("Reverse the sort order (e.g. Z->A, or fewest items first).")
+        .defaultValue(false)
+        .visible(() -> !stackOnly.get())
+        .build()
+    );
+
+    // ── State ──────────────────────────────────────────────────────────────
 
     private final Deque<int[]> actionQueue = new ArrayDeque<>();
     private int timer = 0;
@@ -67,6 +122,8 @@ public class InvSort extends Module {
         super(AddonTemplate.CATEGORY, "inv-sort",
             "Sorts your inventory and open containers. Press the keybind to trigger.");
     }
+
+    // ── Lifecycle ──────────────────────────────────────────────────────────
 
     @Override
     public void onActivate() {
@@ -83,11 +140,10 @@ public class InvSort extends Module {
         }
 
         if (sortPlayer.get()) {
-            actionQueue.addAll(buildSortPlan(getPlayerMainSlots(screen)));
+            actionQueue.addAll(buildSortPlan(getPlayerSlots(screen)));
         }
 
-        // Execute first action on the very first tick
-        timer = delay.get();
+        timer = delay.get(); // fire first action on the very first tick
 
         if (actionQueue.isEmpty()) {
             info("Nothing to sort.");
@@ -106,7 +162,6 @@ public class InvSort extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        // Cancel if the screen was closed mid-sort
         if (!(mc.currentScreen instanceof HandledScreen<?>)) {
             toggle();
             return;
@@ -130,9 +185,9 @@ public class InvSort extends Module {
     // ── Slot collection ────────────────────────────────────────────────────
 
     /**
-     * Returns sortable slots for the open container.
-     * Supported: generic chests/barrels/ender chests, shulker boxes,
-     * dispensers/droppers (3×3), and hoppers.
+     * Returns sortable container slots for supported screen types.
+     * Supported: chests/barrels/ender chests (generic), shulker boxes,
+     * dispensers/droppers (3x3), hoppers.
      */
     private List<SlotEntry> getContainerSlots(HandledScreen<?> screen) {
         if (!(screen instanceof GenericContainerScreen)
@@ -144,7 +199,6 @@ public class InvSort extends Module {
 
         List<SlotEntry> result = new ArrayList<>();
         for (Slot slot : screen.getScreenHandler().slots) {
-            // All non-player slots in these screens are sortable item storage
             if (!(slot.inventory instanceof PlayerInventory)) {
                 result.add(new SlotEntry(((ISlot) slot).meteor$getId(), slot.getStack().copy()));
             }
@@ -152,15 +206,17 @@ public class InvSort extends Module {
         return result;
     }
 
-    /** Returns player main inventory slots (indices 9–35, hotbar excluded). */
-    private List<SlotEntry> getPlayerMainSlots(HandledScreen<?> screen) {
+    /**
+     * Returns player inventory slots. Always includes main (indices 9-35).
+     * Optionally includes hotbar (indices 0-8) when sort-hotbar is enabled.
+     */
+    private List<SlotEntry> getPlayerSlots(HandledScreen<?> screen) {
         List<SlotEntry> result = new ArrayList<>();
         for (Slot slot : screen.getScreenHandler().slots) {
-            if (slot.inventory instanceof PlayerInventory) {
-                int index = ((ISlot) slot).meteor$getIndex();
-                if (SlotUtils.isMain(index)) {
-                    result.add(new SlotEntry(((ISlot) slot).meteor$getId(), slot.getStack().copy()));
-                }
+            if (!(slot.inventory instanceof PlayerInventory)) continue;
+            int index = ((ISlot) slot).meteor$getIndex();
+            if (SlotUtils.isMain(index) || (sortHotbar.get() && SlotUtils.isHotbar(index))) {
+                result.add(new SlotEntry(((ISlot) slot).meteor$getId(), slot.getStack().copy()));
             }
         }
         return result;
@@ -171,20 +227,16 @@ public class InvSort extends Module {
     private List<int[]> buildSortPlan(List<SlotEntry> slots) {
         if (slots.isEmpty()) return List.of();
 
-        // Work on copies so simulation doesn't touch real slot objects
         List<SlotEntry> working = new ArrayList<>(slots.size());
         for (SlotEntry s : slots) working.add(new SlotEntry(s.id, s.stack.copy()));
 
         List<int[]> actions = new ArrayList<>();
         stackPhase(working, actions);
-        sortPhase(working, actions);
+        if (!stackOnly.get()) sortPhase(working, actions);
         return actions;
     }
 
-    /**
-     * Phase 1 — Stacking: merge partial stacks of identical items.
-     * Each action moves 'source' into 'target'; Minecraft merges them automatically.
-     */
+    /** Phase 1: merge partial stacks of identical items. */
     private void stackPhase(List<SlotEntry> slots, List<int[]> actions) {
         for (int i = 0; i < slots.size(); i++) {
             SlotEntry target = slots.get(i);
@@ -207,17 +259,14 @@ public class InvSort extends Module {
                 } else {
                     source.stack = source.stack.copyWithCount(combined - max);
                     target.stack = target.stack.copyWithCount(max);
-                    break; // target full — advance to next target
+                    break;
                 }
                 if (target.stack.getCount() >= target.stack.getMaxCount()) break;
             }
         }
     }
 
-    /**
-     * Phase 2 — Sorting: selection-sort by registry ID → stack count → damage.
-     * Each action is a swap; InvUtils.move() handles the displaced item automatically.
-     */
+    /** Phase 2: selection-sort using the configured sort mode and direction. */
     private void sortPhase(List<SlotEntry> slots, List<int[]> actions) {
         for (int i = 0; i < slots.size(); i++) {
             int bestIdx = i;
@@ -233,24 +282,37 @@ public class InvSort extends Module {
         }
     }
 
+    /**
+     * Returns true if {@code candidate} should be placed before {@code current}.
+     * Primary comparison uses the configured sort mode and direction.
+     * Ties are broken by registry ID → count → damage (always ascending, for stability).
+     */
     private boolean isBetter(SlotEntry candidate, SlotEntry current) {
         ItemStack c = candidate.stack;
         ItemStack b = current.stack;
         if (b.isEmpty() && !c.isEmpty()) return true;
         if (!b.isEmpty() && c.isEmpty()) return false;
-        int cmp = Registries.ITEM.getId(b.getItem()).compareTo(Registries.ITEM.getId(c.getItem()));
-        if (cmp == 0) {
-            if (c.getCount() != b.getCount()) return c.getCount() > b.getCount();
-            return c.getDamage() > b.getDamage();
-        }
-        return cmp > 0;
+
+        int cmp = switch (sortMode.get()) {
+            case REGISTRY -> Registries.ITEM.getId(b.getItem()).compareTo(Registries.ITEM.getId(c.getItem()));
+            case NAME     -> b.getName().getString().compareToIgnoreCase(c.getName().getString());
+            case COUNT    -> Integer.compare(c.getCount(), b.getCount()); // natural = most first
+        };
+
+        if (cmp != 0) return reverseSort.get() ? cmp < 0 : cmp > 0;
+
+        // Stable tiebreaker — not affected by reverseSort
+        cmp = Registries.ITEM.getId(b.getItem()).compareTo(Registries.ITEM.getId(c.getItem()));
+        if (cmp != 0) return cmp > 0;
+        if (c.getCount() != b.getCount()) return c.getCount() > b.getCount();
+        return c.getDamage() > b.getDamage();
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
     /**
-     * Places any cursor-held item back into an empty slot before sorting.
-     * Drops to ground as a last resort to avoid corrupting the action plan.
+     * Moves any cursor-held item to an empty slot before sorting starts.
+     * Falls back to dropping it on the ground if the inventory is completely full.
      */
     private void clearCursor() {
         if (mc.player.currentScreenHandler.getCursorStack().isEmpty()) return;
