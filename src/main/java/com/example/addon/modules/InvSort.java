@@ -1,6 +1,9 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
+import meteordevelopment.meteorclient.events.meteor.KeyEvent;
+import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
+import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.mixininterface.ISlot;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
@@ -10,15 +13,17 @@ import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
+import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
-import meteordevelopment.meteorclient.events.world.TickEvent;
+import net.minecraft.client.gui.screen.ingame.CreativeInventoryScreen;
 import net.minecraft.client.gui.screen.ingame.Generic3x3ContainerScreen;
 import net.minecraft.client.gui.screen.ingame.GenericContainerScreen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.screen.ingame.HopperScreen;
+import net.minecraft.client.gui.screen.ingame.HorseScreen;
 import net.minecraft.client.gui.screen.ingame.ShulkerBoxScreen;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
@@ -31,16 +36,12 @@ import java.util.Deque;
 import java.util.List;
 
 /**
- * Keybind-triggered one-shot inventory sorter.
- * Press the module keybind -> sorts -> auto-disables.
+ * Persistent inventory sorter. Enable the module, then press the sort
+ * keybind while any inventory or container is open to trigger a sort.
+ * Mode and direction can be changed with hotkeys at any time.
  *
- * Supported containers: chests, barrels, ender chests, shulker boxes,
- * dispensers, droppers, hoppers (server-safe via configurable delay).
- *
- * Hotkeys (fire globally, no need for a screen to be open):
- *   cycle-mode   - cycle sort mode in order
- *   toggle-reverse  - flip sort direction
- *   toggle-stack-only - switch between full sort and stack-merge only
+ * Supported containers: chests, barrels, ender chests (generic),
+ * shulker boxes, dispensers/droppers (3x3), hoppers, horses with chests.
  */
 public class InvSort extends Module {
 
@@ -65,15 +66,15 @@ public class InvSort extends Module {
 
     // ── Settings ───────────────────────────────────────────────────────────
 
-    private final SettingGroup sgGeneral  = settings.getDefaultGroup();
-    private final SettingGroup sgSort     = settings.createGroup("Sort Behaviour");
-    private final SettingGroup sgHotkeys  = settings.createGroup("Hotkeys");
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgSort    = settings.createGroup("Sort Behaviour");
+    private final SettingGroup sgHotkeys = settings.createGroup("Hotkeys");
 
     // --- General ---
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
-        .description("Ticks between inventory actions. Raise this on servers with anti-cheat (4-6 is safe).")
+        .description("Ticks between inventory actions. Raise on servers with anti-cheat (4-6 is safe).")
         .defaultValue(2)
         .min(0)
         .sliderMax(20)
@@ -103,7 +104,7 @@ public class InvSort extends Module {
     );
 
     // --- Sort Behaviour ---
-    // stackOnly declared first so sortMode/reverseSort can reference it in visible()
+    // stackOnly declared first so sortMode/reverseSort can safely reference it in visible().
 
     private final Setting<Boolean> stackOnly = sgSort.add(new BoolSetting.Builder()
         .name("stack-only")
@@ -122,20 +123,27 @@ public class InvSort extends Module {
 
     private final Setting<Boolean> reverseSort = sgSort.add(new BoolSetting.Builder()
         .name("reverse")
-        .description("Reverse the sort order (e.g. Z->A, or fewest items first).")
+        .description("Reverse the sort order (Z->A, or fewest items first for Count mode).")
         .defaultValue(false)
         .visible(() -> !stackOnly.get())
         .build()
     );
 
     // --- Hotkeys ---
-    // action() callbacks fire globally so these work without opening the GUI.
+    // These fire via @EventHandler while the module is enabled, so all keybinds
+    // remain responsive as long as InvSort is toggled on.
+
+    private final Setting<Keybind> sortKey = sgHotkeys.add(new KeybindSetting.Builder()
+        .name("sort-key")
+        .description("Press to trigger a sort of the current screen.")
+        .defaultValue(Keybind.none())
+        .build()
+    );
 
     private final Setting<Keybind> cycleModeKey = sgHotkeys.add(new KeybindSetting.Builder()
         .name("cycle-mode")
         .description("Cycle sort mode: Registry ID -> Display Name -> Stack Count -> repeat.")
         .defaultValue(Keybind.none())
-        .action(this::cycleMode)
         .build()
     );
 
@@ -143,15 +151,13 @@ public class InvSort extends Module {
         .name("toggle-reverse")
         .description("Toggle between normal and reversed sort direction.")
         .defaultValue(Keybind.none())
-        .action(this::toggleReverse)
         .build()
     );
 
     private final Setting<Keybind> toggleStackOnlyKey = sgHotkeys.add(new KeybindSetting.Builder()
         .name("toggle-stack-only")
-        .description("Toggle stack-only mode (merge stacks without reordering).")
+        .description("Toggle stack-only mode on or off.")
         .defaultValue(Keybind.none())
-        .action(this::toggleStackOnly)
         .build()
     );
 
@@ -162,55 +168,46 @@ public class InvSort extends Module {
 
     public InvSort() {
         super(AddonTemplate.CATEGORY, "inv-sort",
-            "Sorts your inventory and open containers. Press the keybind to trigger.");
+            "Persistent inventory sorter. Keep enabled and press the sort keybind.");
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
     @Override
-    public void onActivate() {
-        if (!(mc.currentScreen instanceof HandledScreen<?> screen)) {
-            info("Open your inventory or a container first.");
-            toggle();
-            return;
-        }
-
-        clearCursor();
-
-        if (sortContainers.get()) {
-            actionQueue.addAll(buildSortPlan(getContainerSlots(screen)));
-        }
-
-        if (sortPlayer.get()) {
-            actionQueue.addAll(buildSortPlan(getPlayerSlots(screen)));
-        }
-
-        timer = delay.get(); // fire first action on the very first tick
-
-        if (actionQueue.isEmpty()) {
-            info("Nothing to sort.");
-            toggle();
-        }
+    public void onDeactivate() {
+        cancelSort();
     }
 
-    @Override
-    public void onDeactivate() {
-        actionQueue.clear();
-        timer = 0;
-        if (mc.player != null && !mc.player.currentScreenHandler.getCursorStack().isEmpty()) {
-            InvUtils.dropHand();
-        }
+    // ── Input handling ─────────────────────────────────────────────────────
+
+    @EventHandler
+    private void onKey(KeyEvent event) {
+        if (event.action != KeyAction.Press) return;
+        if (sortKey.get().matches(event.input)) { triggerSort(); event.cancel(); }
+        else if (cycleModeKey.get().matches(event.input)) cycleMode();
+        else if (toggleReverseKey.get().matches(event.input)) toggleReverse();
+        else if (toggleStackOnlyKey.get().matches(event.input)) toggleStackOnly();
     }
 
     @EventHandler
-    private void onTick(TickEvent.Post event) {
-        if (!(mc.currentScreen instanceof HandledScreen<?>)) {
-            toggle();
-            return;
-        }
+    private void onMouseClick(MouseClickEvent event) {
+        if (event.action != KeyAction.Press) return;
+        // Cancel mouse event for sort trigger to prevent pick-block or other default actions
+        if (sortKey.get().matches(event.input)) { triggerSort(); event.cancel(); }
+        else if (cycleModeKey.get().matches(event.input)) cycleMode();
+        else if (toggleReverseKey.get().matches(event.input)) toggleReverse();
+        else if (toggleStackOnlyKey.get().matches(event.input)) toggleStackOnly();
+    }
 
-        if (actionQueue.isEmpty()) {
-            toggle();
+    // ── Tick — execute queued sort actions ─────────────────────────────────
+
+    @EventHandler
+    private void onTick(TickEvent.Post event) {
+        if (actionQueue.isEmpty()) return;
+
+        // Cancel if screen closed mid-sort
+        if (!(mc.currentScreen instanceof HandledScreen<?>)) {
+            cancelSort();
             return;
         }
 
@@ -224,32 +221,59 @@ public class InvSort extends Module {
         InvUtils.move().fromId(action[0]).toId(action[1]);
     }
 
+    // ── Sort trigger ───────────────────────────────────────────────────────
+
+    private void triggerSort() {
+        if (mc.player == null) return;
+
+        // Creative inventory has a completely different slot layout
+        if (mc.currentScreen instanceof CreativeInventoryScreen) {
+            info("Sorting is not supported in the creative inventory.");
+            return;
+        }
+
+        if (!(mc.currentScreen instanceof HandledScreen<?> screen)) {
+            info("Open your inventory or a container first.");
+            return;
+        }
+
+        // Cancel any in-progress sort before starting a new one
+        cancelSort();
+        clearCursor();
+
+        if (sortContainers.get()) actionQueue.addAll(buildSortPlan(getContainerSlots(screen)));
+        if (sortPlayer.get())     actionQueue.addAll(buildSortPlan(getPlayerSlots(screen)));
+
+        timer = delay.get(); // fire first action on the very next tick
+
+        if (actionQueue.isEmpty()) info("Nothing to sort.");
+    }
+
+    private void cancelSort() {
+        actionQueue.clear();
+        timer = 0;
+        if (mc.player != null && !mc.player.currentScreenHandler.getCursorStack().isEmpty()) {
+            InvUtils.dropHand();
+        }
+    }
+
     // ── Hotkey actions ─────────────────────────────────────────────────────
 
     private void cycleMode() {
-        if (mc.player == null) return;
-        if (stackOnly.get()) {
-            info("Disable stack-only first to change sort mode.");
-            return;
-        }
+        if (stackOnly.get()) { info("Disable stack-only first to change sort mode."); return; }
         SortMode next = sortMode.get().next();
         sortMode.set(next);
         info("Sort mode: %s.", next);
     }
 
     private void toggleReverse() {
-        if (mc.player == null) return;
-        if (stackOnly.get()) {
-            info("Disable stack-only first to change sort direction.");
-            return;
-        }
+        if (stackOnly.get()) { info("Disable stack-only first to change sort direction."); return; }
         boolean next = !reverseSort.get();
         reverseSort.set(next);
         info("Sort direction: %s.", next ? "reversed" : "normal");
     }
 
     private void toggleStackOnly() {
-        if (mc.player == null) return;
         boolean next = !stackOnly.get();
         stackOnly.set(next);
         info("Stack-only: %s.", next ? "on" : "off");
@@ -260,16 +284,26 @@ public class InvSort extends Module {
     /**
      * Returns sortable container slots for supported screen types.
      * Supported: chests/barrels/ender chests (generic), shulker boxes,
-     * dispensers/droppers (3x3), hoppers.
+     * dispensers/droppers (3x3), hoppers, horses with chests.
+     * Returns an empty list for unsupported screens (furnace, crafting table, etc.).
      */
     private List<SlotEntry> getContainerSlots(HandledScreen<?> screen) {
-        if (!(screen instanceof GenericContainerScreen)
-            && !(screen instanceof ShulkerBoxScreen)
-            && !(screen instanceof Generic3x3ContainerScreen)
-            && !(screen instanceof HopperScreen)) {
-            return List.of();
+        if (screen instanceof GenericContainerScreen
+            || screen instanceof ShulkerBoxScreen
+            || screen instanceof Generic3x3ContainerScreen
+            || screen instanceof HopperScreen) {
+            return collectNonPlayerSlots(screen);
         }
 
+        if (screen instanceof HorseScreen horseScreen) {
+            return getHorseChestSlots(horseScreen);
+        }
+
+        return List.of();
+    }
+
+    /** Collects all non-PlayerInventory slots from the screen's handler. */
+    private List<SlotEntry> collectNonPlayerSlots(HandledScreen<?> screen) {
         List<SlotEntry> result = new ArrayList<>();
         for (Slot slot : screen.getScreenHandler().slots) {
             if (!(slot.inventory instanceof PlayerInventory)) {
@@ -280,8 +314,34 @@ public class InvSort extends Module {
     }
 
     /**
+     * Returns horse chest slots, skipping slot 0 (saddle) and slot 1 (armor).
+     * Only collects if the horse has a chest (inventory size > 2).
+     */
+    private List<SlotEntry> getHorseChestSlots(HorseScreen screen) {
+        List<SlotEntry> result = new ArrayList<>();
+        boolean pastEquipment = false;
+        int equipmentSeen = 0;
+
+        for (Slot slot : screen.getScreenHandler().slots) {
+            if (slot.inventory instanceof PlayerInventory) continue;
+
+            // First two non-player slots are saddle and armor — skip them
+            if (equipmentSeen < 2) {
+                equipmentSeen++;
+                continue;
+            }
+
+            pastEquipment = true;
+            result.add(new SlotEntry(((ISlot) slot).meteor$getId(), slot.getStack().copy()));
+        }
+
+        // If no chest slots were found beyond equipment, return empty
+        return pastEquipment ? result : List.of();
+    }
+
+    /**
      * Returns player inventory slots. Always includes main (indices 9-35).
-     * Optionally includes hotbar (indices 0-8) when sort-hotbar is enabled.
+     * Optionally includes hotbar (0-8) when sort-hotbar is enabled.
      */
     private List<SlotEntry> getPlayerSlots(HandledScreen<?> screen) {
         List<SlotEntry> result = new ArrayList<>();
@@ -357,7 +417,7 @@ public class InvSort extends Module {
 
     /**
      * Returns true if candidate should be placed before current.
-     * Primary comparison respects sort mode and reverse direction.
+     * Primary comparison uses sort mode and respects reverseSort.
      * Tiebreakers are always ascending (registry -> count -> damage) for stability.
      */
     private boolean isBetter(SlotEntry candidate, SlotEntry current) {
@@ -384,8 +444,8 @@ public class InvSort extends Module {
     // ── Helpers ────────────────────────────────────────────────────────────
 
     /**
-     * Moves any cursor-held item to an empty slot before sorting starts.
-     * Falls back to dropping it on the ground if the inventory is completely full.
+     * Moves any cursor-held item to an empty slot before sorting.
+     * Falls back to dropping it on the ground if the inventory is full.
      */
     private void clearCursor() {
         if (mc.player.currentScreenHandler.getCursorStack().isEmpty()) return;
