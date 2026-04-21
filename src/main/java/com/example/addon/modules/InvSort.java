@@ -5,9 +5,11 @@ import meteordevelopment.meteorclient.mixininterface.ISlot;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.KeybindSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
@@ -30,33 +32,45 @@ import java.util.List;
 
 /**
  * Keybind-triggered one-shot inventory sorter.
- * Press the module keybind → sorts → auto-disables.
+ * Press the module keybind -> sorts -> auto-disables.
  *
  * Supported containers: chests, barrels, ender chests, shulker boxes,
  * dispensers, droppers, hoppers (server-safe via configurable delay).
+ *
+ * Hotkeys (fire globally, no need for a screen to be open):
+ *   cycle-mode   - cycle sort mode in order
+ *   toggle-reverse  - flip sort direction
+ *   toggle-stack-only - switch between full sort and stack-merge only
  */
 public class InvSort extends Module {
 
-    // ── Sort mode enum ─────────────────────────────────────────────────────
+    // ── Sort mode ──────────────────────────────────────────────────────────
 
     public enum SortMode {
-        REGISTRY("Registry ID"),   // deterministic order based on item registry path
+        REGISTRY("Registry ID"),   // deterministic order by internal item path
         NAME("Display Name"),      // alphabetical by translated item name
-        COUNT("Stack Count");      // largest stacks placed first
+        COUNT("Stack Count");      // largest stacks first
 
         private final String label;
         SortMode(String label) { this.label = label; }
 
         @Override
         public String toString() { return label; }
+
+        public SortMode next() {
+            SortMode[] v = values();
+            return v[(ordinal() + 1) % v.length];
+        }
     }
 
     // ── Settings ───────────────────────────────────────────────────────────
 
-    private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgSort    = settings.createGroup("Sort Behaviour");
+    private final SettingGroup sgGeneral  = settings.getDefaultGroup();
+    private final SettingGroup sgSort     = settings.createGroup("Sort Behaviour");
+    private final SettingGroup sgHotkeys  = settings.createGroup("Hotkeys");
 
-    // General
+    // --- General ---
+
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
         .description("Ticks between inventory actions. Raise this on servers with anti-cheat (4-6 is safe).")
@@ -88,8 +102,9 @@ public class InvSort extends Module {
         .build()
     );
 
-    // Sort behaviour — stackOnly must be declared before sortMode/reverseSort
-    // so their visible() lambdas can reference it safely.
+    // --- Sort Behaviour ---
+    // stackOnly declared first so sortMode/reverseSort can reference it in visible()
+
     private final Setting<Boolean> stackOnly = sgSort.add(new BoolSetting.Builder()
         .name("stack-only")
         .description("Only merge partial stacks; skip reordering entirely.")
@@ -110,6 +125,33 @@ public class InvSort extends Module {
         .description("Reverse the sort order (e.g. Z->A, or fewest items first).")
         .defaultValue(false)
         .visible(() -> !stackOnly.get())
+        .build()
+    );
+
+    // --- Hotkeys ---
+    // action() callbacks fire globally so these work without opening the GUI.
+
+    private final Setting<Keybind> cycleModeKey = sgHotkeys.add(new KeybindSetting.Builder()
+        .name("cycle-mode")
+        .description("Cycle sort mode: Registry ID -> Display Name -> Stack Count -> repeat.")
+        .defaultValue(Keybind.none())
+        .action(this::cycleMode)
+        .build()
+    );
+
+    private final Setting<Keybind> toggleReverseKey = sgHotkeys.add(new KeybindSetting.Builder()
+        .name("toggle-reverse")
+        .description("Toggle between normal and reversed sort direction.")
+        .defaultValue(Keybind.none())
+        .action(this::toggleReverse)
+        .build()
+    );
+
+    private final Setting<Keybind> toggleStackOnlyKey = sgHotkeys.add(new KeybindSetting.Builder()
+        .name("toggle-stack-only")
+        .description("Toggle stack-only mode (merge stacks without reordering).")
+        .defaultValue(Keybind.none())
+        .action(this::toggleStackOnly)
         .build()
     );
 
@@ -180,6 +222,37 @@ public class InvSort extends Module {
 
         int[] action = actionQueue.poll();
         InvUtils.move().fromId(action[0]).toId(action[1]);
+    }
+
+    // ── Hotkey actions ─────────────────────────────────────────────────────
+
+    private void cycleMode() {
+        if (mc.player == null) return;
+        if (stackOnly.get()) {
+            info("Disable stack-only first to change sort mode.");
+            return;
+        }
+        SortMode next = sortMode.get().next();
+        sortMode.set(next);
+        info("Sort mode: %s.", next);
+    }
+
+    private void toggleReverse() {
+        if (mc.player == null) return;
+        if (stackOnly.get()) {
+            info("Disable stack-only first to change sort direction.");
+            return;
+        }
+        boolean next = !reverseSort.get();
+        reverseSort.set(next);
+        info("Sort direction: %s.", next ? "reversed" : "normal");
+    }
+
+    private void toggleStackOnly() {
+        if (mc.player == null) return;
+        boolean next = !stackOnly.get();
+        stackOnly.set(next);
+        info("Stack-only: %s.", next ? "on" : "off");
     }
 
     // ── Slot collection ────────────────────────────────────────────────────
@@ -283,9 +356,9 @@ public class InvSort extends Module {
     }
 
     /**
-     * Returns true if {@code candidate} should be placed before {@code current}.
-     * Primary comparison uses the configured sort mode and direction.
-     * Ties are broken by registry ID → count → damage (always ascending, for stability).
+     * Returns true if candidate should be placed before current.
+     * Primary comparison respects sort mode and reverse direction.
+     * Tiebreakers are always ascending (registry -> count -> damage) for stability.
      */
     private boolean isBetter(SlotEntry candidate, SlotEntry current) {
         ItemStack c = candidate.stack;
@@ -301,7 +374,7 @@ public class InvSort extends Module {
 
         if (cmp != 0) return reverseSort.get() ? cmp < 0 : cmp > 0;
 
-        // Stable tiebreaker — not affected by reverseSort
+        // Stable tiebreaker — unaffected by reverseSort
         cmp = Registries.ITEM.getId(b.getItem()).compareTo(Registries.ITEM.getId(c.getItem()));
         if (cmp != 0) return cmp > 0;
         if (c.getCount() != b.getCount()) return c.getCount() > b.getCount();
