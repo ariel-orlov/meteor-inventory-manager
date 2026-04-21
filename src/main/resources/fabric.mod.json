@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "id": "addon-template",
+  "id": "invsort",
   "version": "${version}",
-  "name": "Addon Template",
-  "description": "An addon template for Meteor Client addons.",
+  "name": "InvSort",
+  "description": "Keybind-triggered inventory and container sorter for Meteor Client.",
   "authors": [
-    "seasnail"
+    "ariel-orlov"
   ],
   "contact": {
-    "sources": "https://github.com/MeteorDevelopment/meteor-addon-template"
+    "sources": "https://github.com/ariel-orlov/meteor-addon-template"
   },
   "icon": "assets/template/icon.png",
   "environment": "client",
@@ -18,10 +18,10 @@
     ]
   },
   "mixins": [
-    "addon-template.mixins.json"
+    "invsort.mixins.json"
   ],
   "custom": {
-    "meteor-client:color": "225,25,25",
+    "meteor-client:color": "100,200,100",
     "modmenu": {
       "parent": {
         "id": "meteor-client"
