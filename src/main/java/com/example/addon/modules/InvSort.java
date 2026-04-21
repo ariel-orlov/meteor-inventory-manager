@@ -1,8 +1,10 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
+import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.meteor.KeyEvent;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
+import meteordevelopment.meteorclient.events.packets.InventoryEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.mixininterface.ISlot;
 import meteordevelopment.meteorclient.settings.BoolSetting;
@@ -103,6 +105,13 @@ public class InvSort extends Module {
         .build()
     );
 
+    private final Setting<Boolean> autoSort = sgGeneral.add(new BoolSetting.Builder()
+        .name("auto-sort")
+        .description("Automatically sort supported containers when you open them.")
+        .defaultValue(false)
+        .build()
+    );
+
     // --- Sort Behaviour ---
     // stackOnly declared first so sortMode/reverseSort can safely reference it in visible().
 
@@ -165,6 +174,7 @@ public class InvSort extends Module {
 
     private final Deque<int[]> actionQueue = new ArrayDeque<>();
     private int timer = 0;
+    private int autoSortCountdown = -1; // -1 = not pending; counts down to 0 then triggers
 
     public InvSort() {
         super(AddonTemplate.CATEGORY, "inv-sort",
@@ -176,6 +186,7 @@ public class InvSort extends Module {
     @Override
     public void onDeactivate() {
         cancelSort();
+        autoSortCountdown = -1;
     }
 
     // ── Input handling ─────────────────────────────────────────────────────
@@ -199,10 +210,51 @@ public class InvSort extends Module {
         else if (toggleStackOnlyKey.get().matches(event.input)) toggleStackOnly();
     }
 
-    // ── Tick — execute queued sort actions ─────────────────────────────────
+    // ── Screen open — auto-sort trigger ───────────────────────────────────
+
+    @EventHandler
+    private void onOpenScreen(OpenScreenEvent event) {
+        if (!autoSort.get()) return;
+        if (event.screen instanceof CreativeInventoryScreen) return;
+
+        boolean supported = event.screen instanceof GenericContainerScreen
+            || event.screen instanceof ShulkerBoxScreen
+            || event.screen instanceof Generic3x3ContainerScreen
+            || event.screen instanceof HopperScreen
+            || event.screen instanceof HorseScreen;
+
+        if (supported) {
+            cancelSort(); // clear any previous sort state
+            autoSortCountdown = 3; // wait 3 ticks for the screen handler to initialise
+        }
+    }
+
+    // ── Inventory packet — desync cancel ──────────────────────────────────
+
+    @EventHandler
+    private void onInventoryUpdate(InventoryEvent event) {
+        if (actionQueue.isEmpty()) return;
+        // If the server pushes a full inventory sync while we're sorting, our
+        // action plan is stale. Cancel and let the user re-trigger.
+        if (event.packet.getSyncId() == mc.player.currentScreenHandler.syncId) {
+            cancelSort();
+            info("Sort cancelled: inventory updated by server. Re-trigger to sort again.");
+        }
+    }
+
+    // ── Tick — auto-sort countdown and action execution ───────────────────
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
+        // Auto-sort countdown: fires triggerSort() once the screen is ready
+        if (autoSortCountdown > 0) {
+            autoSortCountdown--;
+            if (autoSortCountdown == 0) {
+                autoSortCountdown = -1;
+                triggerSort();
+            }
+        }
+
         if (actionQueue.isEmpty()) return;
 
         // Cancel if screen closed mid-sort
