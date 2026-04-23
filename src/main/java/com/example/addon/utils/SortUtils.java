@@ -2,6 +2,7 @@ package com.example.addon.utils;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.component.DataComponentTypes;
+import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.*;
 import net.minecraft.registry.Registries;
 import net.minecraft.screen.ScreenHandler;
@@ -21,46 +22,67 @@ public class SortUtils {
     public static ItemCategory getCategory(ItemStack stack) {
         if (stack.isEmpty()) return ItemCategory.MISC;
         Item item = stack.getItem();
-        if (item instanceof ArmorItem) return ItemCategory.ARMOR;
-        if (item instanceof SwordItem) return ItemCategory.SWORD;
-        if (item instanceof AxeItem) return ItemCategory.AXE;
-        if (item instanceof BowItem) return ItemCategory.BOW;
-        if (item instanceof CrossbowItem) return ItemCategory.CROSSBOW;
+        String id = Registries.ITEM.getId(item).getPath();
+
+        // Armor and shield via equippable component (1.21.2+)
+        var equippable = stack.get(DataComponentTypes.EQUIPPABLE);
+        if (equippable != null) {
+            EquipmentSlot slot = equippable.slot();
+            if (slot == EquipmentSlot.HEAD || slot == EquipmentSlot.CHEST
+                    || slot == EquipmentSlot.LEGS || slot == EquipmentSlot.FEET) {
+                return ItemCategory.ARMOR;
+            }
+        }
+
+        // Weapons by ID suffix (robust across refactors)
+        if (id.endsWith("_sword")) return ItemCategory.SWORD;
+        if (id.endsWith("_axe"))   return ItemCategory.AXE;
+        if (id.equals("bow"))      return ItemCategory.BOW;
+        if (id.equals("crossbow")) return ItemCategory.CROSSBOW;
         if (item == Items.TOTEM_OF_UNDYING) return ItemCategory.TOTEM;
-        if (item instanceof ShieldItem) return ItemCategory.SHIELD;
+        if (id.equals("shield") || id.endsWith("_shield")) return ItemCategory.SHIELD;
+
+        // Potions via component (excludes tipped arrows)
         if (stack.getComponents().contains(DataComponentTypes.POTION_CONTENTS)
-                && !(item instanceof ArrowItem)) return ItemCategory.POTION;
+                && !id.endsWith("_arrow")) return ItemCategory.POTION;
+
+        // Food via component
         if (stack.getComponents().contains(DataComponentTypes.FOOD)) return ItemCategory.FOOD;
-        if (item instanceof MiningToolItem || item instanceof HoeItem) return ItemCategory.TOOL;
+
+        // Tools by ID suffix
+        if (id.endsWith("_pickaxe") || id.endsWith("_shovel") || id.endsWith("_hoe"))
+            return ItemCategory.TOOL;
+
+        // Blocks
         if (item instanceof BlockItem) return ItemCategory.BLOCK;
+
         return ItemCategory.MISC;
     }
 
     public static int scoreItem(ItemStack stack) {
         if (stack.isEmpty()) return Integer.MIN_VALUE;
         int base = getCategory(stack).priority * -1000;
-        int enchants = 0;
-        for (var entry : stack.getEnchantments()) {
-            enchants += entry.getIntValue();
-        }
-        return base + enchants;
+        return base + stack.getEnchantments().getSize();
     }
 
     public static int scoreArmor(ItemStack stack) {
-        if (stack.isEmpty() || !(stack.getItem() instanceof ArmorItem)) return 0;
+        if (stack.isEmpty()) return 0;
+        var equippable = stack.get(DataComponentTypes.EQUIPPABLE);
+        if (equippable == null) return 0;
+        EquipmentSlot slot = equippable.slot();
+        if (slot != EquipmentSlot.HEAD && slot != EquipmentSlot.CHEST
+                && slot != EquipmentSlot.LEGS && slot != EquipmentSlot.FEET) return 0;
+
         String id = Registries.ITEM.getId(stack.getItem()).getPath();
         int tier = 0;
-        if (id.startsWith("netherite_")) tier = 6;
-        else if (id.startsWith("diamond_")) tier = 5;
-        else if (id.startsWith("iron_")) tier = 4;
+        if      (id.startsWith("netherite_")) tier = 6;
+        else if (id.startsWith("diamond_"))   tier = 5;
+        else if (id.startsWith("iron_"))      tier = 4;
         else if (id.startsWith("chainmail_")) tier = 3;
-        else if (id.startsWith("golden_")) tier = 2;
-        else if (id.startsWith("leather_")) tier = 1;
-        int enchants = 0;
-        for (var entry : stack.getEnchantments()) {
-            enchants += entry.getIntValue();
-        }
-        return tier * 100 + enchants * 10;
+        else if (id.startsWith("golden_"))    tier = 2;
+        else if (id.startsWith("leather_"))   tier = 1;
+
+        return tier * 100 + stack.getEnchantments().getSize() * 10;
     }
 
     public static int compareItems(ItemStack a, ItemStack b) {

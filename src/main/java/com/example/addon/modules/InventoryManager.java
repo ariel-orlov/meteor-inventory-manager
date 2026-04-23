@@ -14,6 +14,7 @@ import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.*;
+import net.minecraft.registry.Registries;
 import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.SlotActionType;
@@ -37,58 +38,40 @@ public class InventoryManager extends Module {
     private final SettingGroup sgInv = settings.createGroup("Inventory Sorter");
 
     private final Setting<Boolean> invEnabled = sgInv.add(new BoolSetting.Builder()
-        .name("enabled")
-        .description("Enable inventory sorting.")
-        .defaultValue(true)
-        .build());
+        .name("enabled").description("Enable inventory sorting.").defaultValue(true).build());
 
     private final Setting<Trigger> invTrigger = sgInv.add(new EnumSetting.Builder<Trigger>()
-        .name("trigger")
-        .description("When to sort the player inventory.")
-        .defaultValue(Trigger.ON_OPEN)
-        .build());
+        .name("trigger").description("When to sort the player inventory.")
+        .defaultValue(Trigger.ON_OPEN).build());
 
     private final Setting<Integer> invDelay = sgInv.add(new IntSetting.Builder()
-        .name("continuous-delay")
-        .description("Ticks between sorts in Continuous mode.")
+        .name("continuous-delay").description("Ticks between sorts in Continuous mode.")
         .defaultValue(40).min(5).sliderMax(200)
-        .visible(() -> invTrigger.get() == Trigger.CONTINUOUS)
-        .build());
+        .visible(() -> invTrigger.get() == Trigger.CONTINUOUS).build());
 
     private final Setting<Keybind> invKeybind = sgInv.add(new KeybindSetting.Builder()
-        .name("sort-keybind")
-        .description("Key to trigger inventory sort.")
+        .name("sort-keybind").description("Key to trigger inventory sort.")
         .defaultValue(Keybind.none())
-        .visible(() -> invTrigger.get() == Trigger.ON_KEYBIND)
-        .build());
+        .visible(() -> invTrigger.get() == Trigger.ON_KEYBIND).build());
 
     // ── PvP Loadout ──────────────────────────────────────────────────
     private final SettingGroup sgPvp = settings.createGroup("PvP Loadout");
 
     private final Setting<Boolean> pvpEnabled = sgPvp.add(new BoolSetting.Builder()
-        .name("enabled")
-        .description("Enable PvP loadout management.")
-        .defaultValue(true)
-        .build());
+        .name("enabled").description("Enable PvP loadout management.").defaultValue(true).build());
 
     private final Setting<Boolean> pvpAutoArmor = sgPvp.add(new BoolSetting.Builder()
-        .name("auto-equip-armor")
-        .description("Automatically equip the best armor from inventory.")
-        .defaultValue(true)
-        .build());
+        .name("auto-equip-armor").description("Automatically equip the best armor from inventory.")
+        .defaultValue(true).build());
 
     private final Setting<LoadoutTrigger> pvpTrigger = sgPvp.add(new EnumSetting.Builder<LoadoutTrigger>()
-        .name("trigger")
-        .description("When to apply the PvP loadout.")
-        .defaultValue(LoadoutTrigger.ON_KEYBIND)
-        .build());
+        .name("trigger").description("When to apply the PvP loadout.")
+        .defaultValue(LoadoutTrigger.ON_KEYBIND).build());
 
     private final Setting<Keybind> pvpKeybind = sgPvp.add(new KeybindSetting.Builder()
-        .name("loadout-keybind")
-        .description("Key to apply PvP loadout.")
+        .name("loadout-keybind").description("Key to apply PvP loadout.")
         .defaultValue(Keybind.none())
-        .visible(() -> pvpTrigger.get() == LoadoutTrigger.ON_KEYBIND)
-        .build());
+        .visible(() -> pvpTrigger.get() == LoadoutTrigger.ON_KEYBIND).build());
 
     private final List<Setting<SlotType>> hotbarSlots = new ArrayList<>();
 
@@ -96,22 +79,15 @@ public class InventoryManager extends Module {
     private final SettingGroup sgContainer = settings.createGroup("Container Sorter");
 
     private final Setting<Boolean> ctEnabled = sgContainer.add(new BoolSetting.Builder()
-        .name("enabled")
-        .description("Enable container sorting.")
-        .defaultValue(true)
-        .build());
+        .name("enabled").description("Enable container sorting.").defaultValue(true).build());
 
     private final Setting<Boolean> ctSortOnOpen = sgContainer.add(new BoolSetting.Builder()
-        .name("sort-on-open")
-        .description("Sort container contents when you open it.")
-        .defaultValue(true)
-        .build());
+        .name("sort-on-open").description("Sort container contents when you open it.")
+        .defaultValue(true).build());
 
     private final Setting<Boolean> ctRestock = sgContainer.add(new BoolSetting.Builder()
-        .name("restock")
-        .description("Pull items from container into your inventory.")
-        .defaultValue(true)
-        .build());
+        .name("restock").description("Pull items from container into your inventory.")
+        .defaultValue(true).build());
 
     private final Setting<Boolean> ctRestockPotions = sgContainer.add(new BoolSetting.Builder()
         .name("restock-potions").description("Restock potions.").defaultValue(true)
@@ -180,10 +156,8 @@ public class InventoryManager extends Module {
 
     private void handleInvSorterTick() {
         if (!invEnabled.get()) return;
-
         if (invTrigger.get() == Trigger.CONTINUOUS) {
-            invTickCounter++;
-            if (invTickCounter >= invDelay.get()) {
+            if (++invTickCounter >= invDelay.get()) {
                 invTickCounter = 0;
                 sortPlayerInventory();
             }
@@ -203,7 +177,6 @@ public class InventoryManager extends Module {
 
     private void handlePvpLoadoutTick() {
         if (!pvpEnabled.get()) return;
-
         boolean isDead = mc.player.isDead() || mc.player.getHealth() <= 0;
         if (pvpTrigger.get() == LoadoutTrigger.ON_RESPAWN) {
             if (wasDead && !isDead) applyPvpLoadout();
@@ -237,8 +210,8 @@ public class InventoryManager extends Module {
             for (int i = 9; i <= 35; i++) {
                 ItemStack candidate = handler.getSlot(i).getStack();
                 if (candidate.isEmpty()) continue;
-                if (!(candidate.getItem() instanceof ArmorItem armorItem)) continue;
-                if (armorItem.getSlotType() != eqSlot) continue;
+                var equippable = candidate.get(DataComponentTypes.EQUIPPABLE);
+                if (equippable == null || equippable.slot() != eqSlot) continue;
                 int score = SortUtils.scoreArmor(candidate);
                 if (score > bestScore) {
                     bestScore = score;
@@ -272,21 +245,21 @@ public class InventoryManager extends Module {
                 }
             }
             if (foundSlot == -1) continue;
-
             SortUtils.interact(syncId, foundSlot, hotbarIdx, SlotActionType.SWAP);
         }
     }
 
     private boolean matchesSlotType(ItemStack stack, SlotType type) {
+        String id = Registries.ITEM.getId(stack.getItem()).getPath();
         return switch (type) {
-            case SWORD -> stack.getItem() instanceof SwordItem;
-            case AXE -> stack.getItem() instanceof AxeItem;
-            case BOW -> stack.getItem() instanceof BowItem;
-            case CROSSBOW -> stack.getItem() instanceof CrossbowItem;
-            case SHIELD -> stack.getItem() instanceof ShieldItem;
+            case SWORD -> id.endsWith("_sword");
+            case AXE -> id.endsWith("_axe");
+            case BOW -> id.equals("bow");
+            case CROSSBOW -> id.equals("crossbow");
+            case SHIELD -> id.equals("shield") || id.endsWith("_shield");
             case TOTEM -> stack.getItem() == Items.TOTEM_OF_UNDYING;
             case POTION -> stack.getComponents().contains(DataComponentTypes.POTION_CONTENTS)
-                           && !(stack.getItem() instanceof ArrowItem);
+                           && !id.endsWith("_arrow");
             case FOOD -> stack.getComponents().contains(DataComponentTypes.FOOD);
             case BLOCK -> stack.getItem() instanceof BlockItem;
             default -> false;
@@ -305,34 +278,27 @@ public class InventoryManager extends Module {
         int containerSize = handler.slots.size() - 36;
         if (containerSize <= 0) return;
 
-        if (ctSortOnOpen.get()) {
-            SortUtils.sortSlotRange(handler, 0, containerSize - 1);
-        }
-
-        if (ctRestock.get()) {
-            restockFromContainer(handler, containerSize);
-        }
+        if (ctSortOnOpen.get()) SortUtils.sortSlotRange(handler, 0, containerSize - 1);
+        if (ctRestock.get()) restockFromContainer(handler, containerSize);
     }
 
     private void restockFromContainer(ScreenHandler handler, int containerSize) {
         int syncId = handler.syncId;
-
         for (int i = 0; i < containerSize; i++) {
             ItemStack stack = handler.getSlot(i).getStack();
             if (stack.isEmpty()) continue;
 
+            String id = Registries.ITEM.getId(stack.getItem()).getPath();
             SortUtils.ItemCategory cat = SortUtils.getCategory(stack);
             boolean shouldRestock = switch (cat) {
                 case POTION -> ctRestockPotions.get();
-                case FOOD -> ctRestockFood.get();
-                case BLOCK -> ctRestockBlocks.get();
-                case MISC -> ctRestockArrows.get() && stack.getItem() instanceof ArrowItem;
-                default -> false;
+                case FOOD   -> ctRestockFood.get();
+                case BLOCK  -> ctRestockBlocks.get();
+                case MISC   -> ctRestockArrows.get() && id.endsWith("_arrow");
+                default     -> false;
             };
 
-            if (shouldRestock && !playerAlreadyHas(stack)) {
-                SortUtils.shiftClick(syncId, i);
-            }
+            if (shouldRestock && !playerAlreadyHas(stack)) SortUtils.shiftClick(syncId, i);
         }
     }
 
