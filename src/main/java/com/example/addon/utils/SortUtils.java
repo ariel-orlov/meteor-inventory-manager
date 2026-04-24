@@ -91,7 +91,44 @@ public class SortUtils {
         if (b.isEmpty()) return -1;
         int catCmp = getCategory(a).priority - getCategory(b).priority;
         if (catCmp != 0) return catCmp;
-        return scoreItem(b) - scoreItem(a);
+        // Group identical items together (so same-type stacks end up adjacent)
+        String idA = Registries.ITEM.getId(a.getItem()).getPath();
+        String idB = Registries.ITEM.getId(b.getItem()).getPath();
+        int idCmp = idA.compareTo(idB);
+        if (idCmp != 0) return idCmp;
+        return b.getCount() - a.getCount(); // larger stacks first
+    }
+
+    public static void mergeStacks(ScreenHandler handler, int start, int end) {
+        if (mc.player == null) return;
+        int syncId = handler.syncId;
+        int count = end - start + 1;
+        ItemStack[] local = new ItemStack[count];
+        for (int i = 0; i < count; i++)
+            local[i] = handler.getSlot(start + i).getStack().copy();
+
+        for (int i = 0; i < count; i++) {
+            if (local[i].isEmpty() || local[i].getCount() >= local[i].getMaxCount()) continue;
+            for (int j = i + 1; j < count; j++) {
+                if (local[j].isEmpty()) continue;
+                if (!ItemStack.areItemsAndComponentsEqual(local[i], local[j])) break;
+                int space = local[i].getMaxCount() - local[i].getCount();
+                int take = Math.min(space, local[j].getCount());
+                interact(syncId, start + j, 0, SlotActionType.PICKUP);
+                interact(syncId, start + i, 0, SlotActionType.PICKUP);
+                int leftover = local[j].getCount() - take;
+                if (leftover > 0) {
+                    interact(syncId, start + j, 0, SlotActionType.PICKUP);
+                    local[j] = local[j].copy();
+                    local[j].setCount(leftover);
+                } else {
+                    local[j] = ItemStack.EMPTY;
+                }
+                local[i] = local[i].copy();
+                local[i].setCount(local[i].getCount() + take);
+                if (local[i].getCount() >= local[i].getMaxCount()) break;
+            }
+        }
     }
 
     public static void interact(int syncId, int slotId, int button, SlotActionType type) {

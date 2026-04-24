@@ -6,6 +6,7 @@ import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
@@ -66,6 +67,13 @@ public class InventoryManager extends Module {
         .visible(() -> invContinuous.get())
         .build());
 
+    private final Setting<Keybind> sortKey = sgInv.add(new KeybindSetting.Builder()
+        .name("sort-key")
+        .description("Press to sort whatever inventory or container is currently open.")
+        .defaultValue(Keybind.none())
+        .action(this::doSort)
+        .build());
+
     // ── PvP Loadout ──────────────────────────────────────────────────
     private final SettingGroup sgPvp = settings.createGroup("PvP Loadout");
 
@@ -78,7 +86,7 @@ public class InventoryManager extends Module {
     private final Setting<Boolean> pvpArrangeHotbar = sgPvp.add(new BoolSetting.Builder()
         .name("arrange-hotbar")
         .description("Move best PvP items to configured hotbar slots on activate.")
-        .defaultValue(true)
+        .defaultValue(false)
         .build());
 
     private final Setting<Boolean> pvpOnRespawn = sgPvp.add(new BoolSetting.Builder()
@@ -145,15 +153,32 @@ public class InventoryManager extends Module {
     @Override
     public void onActivate() {
         if (mc.player == null) return;
-
-        if (invSort.get()) {
-            sortPlayerInventory();
-            info("Inventory sorted.");
-        }
-
+        if (invSort.get()) doSort();
         if (pvpEquipArmor.get() || pvpArrangeHotbar.get()) {
             applyPvpLoadout();
             info("PvP loadout applied.");
+        }
+    }
+
+    // ── Sort dispatcher (keybind + onActivate) ───────────────────────
+
+    private void doSort() {
+        if (mc.player == null) return;
+        tickCounter = 0;
+        ScreenHandler handler = mc.player.currentScreenHandler;
+        if (handler instanceof PlayerScreenHandler || handler == null) {
+            sortPlayerInventory();
+            info("Inventory sorted.");
+        } else {
+            int containerSize = handler.slots.size() - 36;
+            if (containerSize > 0) {
+                SortUtils.sortSlotRange(handler, 0, containerSize - 1);
+                SortUtils.mergeStacks(handler, 0, containerSize - 1);
+                // Sort the player main inventory portion visible in this screen
+                SortUtils.sortSlotRange(handler, containerSize, containerSize + 26);
+                SortUtils.mergeStacks(handler, containerSize, containerSize + 26);
+            }
+            info("Container & inventory sorted.");
         }
     }
 
@@ -205,8 +230,9 @@ public class InventoryManager extends Module {
 
     private void sortPlayerInventory() {
         if (mc.player == null) return;
-        // Slots 9-35 in PlayerScreenHandler = main inventory (not hotbar, not armor)
-        SortUtils.sortSlotRange(mc.player.playerScreenHandler, 9, 35);
+        PlayerScreenHandler h = mc.player.playerScreenHandler;
+        SortUtils.sortSlotRange(h, 9, 35);
+        SortUtils.mergeStacks(h, 9, 35);
     }
 
     // ── PvP Loadout ──────────────────────────────────────────────────
