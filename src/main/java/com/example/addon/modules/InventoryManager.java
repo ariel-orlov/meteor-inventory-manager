@@ -22,11 +22,6 @@ import net.minecraft.screen.slot.SlotActionType;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Three sub-features in one module.
- * Pressing the module keybind (or clicking Enable) fires all active sub-features immediately.
- * Keep the module ON for auto-sort-on-open, continuous sort, and container handling.
- */
 public class InventoryManager extends Module {
 
     public enum SlotType {
@@ -42,21 +37,22 @@ public class InventoryManager extends Module {
     // ── Inventory Sorter ─────────────────────────────────────────────
     private final SettingGroup sgInv = settings.createGroup("Inventory Sorter");
 
-    private final Setting<Boolean> invSort = sgInv.add(new BoolSetting.Builder()
-        .name("sort-inventory")
-        .description("Sort main inventory when module is activated.")
-        .defaultValue(true)
+    private final Setting<Keybind> sortKey = sgInv.add(new KeybindSetting.Builder()
+        .name("sort-key")
+        .description("Press to sort the open inventory or container on demand.")
+        .defaultValue(Keybind.none())
+        .action(this::doSort)
         .build());
 
     private final Setting<Boolean> invSortOnOpen = sgInv.add(new BoolSetting.Builder()
         .name("sort-on-open")
-        .description("Also sort inventory every time you open it.")
+        .description("Automatically sort your inventory whenever you open it.")
         .defaultValue(true)
         .build());
 
     private final Setting<Boolean> invContinuous = sgInv.add(new BoolSetting.Builder()
         .name("continuous")
-        .description("Continuously sort inventory while module is enabled.")
+        .description("Continuously re-sort your inventory while the module is on.")
         .defaultValue(false)
         .build());
 
@@ -65,13 +61,6 @@ public class InventoryManager extends Module {
         .description("Ticks between continuous sorts.")
         .defaultValue(40).min(5).sliderMax(200)
         .visible(() -> invContinuous.get())
-        .build());
-
-    private final Setting<Keybind> sortKey = sgInv.add(new KeybindSetting.Builder()
-        .name("sort-key")
-        .description("Press to sort whatever inventory or container is currently open.")
-        .defaultValue(Keybind.none())
-        .action(this::doSort)
         .build());
 
     // ── PvP Loadout ──────────────────────────────────────────────────
@@ -91,7 +80,7 @@ public class InventoryManager extends Module {
 
     private final Setting<Boolean> pvpOnRespawn = sgPvp.add(new BoolSetting.Builder()
         .name("on-respawn")
-        .description("Also apply PvP loadout automatically on respawn.")
+        .description("Re-apply PvP loadout automatically on respawn.")
         .defaultValue(false)
         .build());
 
@@ -136,7 +125,7 @@ public class InventoryManager extends Module {
 
     public InventoryManager() {
         super(AddonTemplate.CATEGORY, "inventory-manager",
-            "Enable to sort inventory + apply PvP loadout. Keep on for auto-sort and container features.");
+            "Sort inventory/containers and manage PvP loadout. Bind sort-key to sort on demand.");
 
         for (int i = 0; i < 9; i++) {
             hotbarSlots.add(sgPvp.add(new EnumSetting.Builder<SlotType>()
@@ -153,14 +142,55 @@ public class InventoryManager extends Module {
     @Override
     public void onActivate() {
         if (mc.player == null) return;
-        if (invSort.get()) doSort();
+        // Only apply PvP loadout on activate — never sort automatically here.
+        // Sorting is triggered by: sort-key press, sort-on-open, or continuous mode.
         if (pvpEquipArmor.get() || pvpArrangeHotbar.get()) {
             applyPvpLoadout();
             info("PvP loadout applied.");
         }
     }
 
-    // ── Sort dispatcher (keybind + onActivate) ───────────────────────
+    // ── Events ───────────────────────────────────────────────────────
+
+    @EventHandler
+    private void onTick(TickEvent.Post event) {
+        if (mc.player == null) return;
+
+        if (invContinuous.get()) {
+            if (++tickCounter >= invDelay.get()) {
+                tickCounter = 0;
+                sortPlayerInventory();
+            }
+        }
+
+        if (pvpOnRespawn.get() && (pvpEquipArmor.get() || pvpArrangeHotbar.get())) {
+            boolean isDead = mc.player.isDead() || mc.player.getHealth() <= 0;
+            if (wasDead && !isDead) applyPvpLoadout();
+            wasDead = isDead;
+        }
+
+        if (containerPending) {
+            containerPending = false;
+            handleContainerSort();
+        }
+    }
+
+    @EventHandler
+    private void onOpenScreen(OpenScreenEvent event) {
+        if (mc.player == null) return;
+
+        if (invSortOnOpen.get() && event.screen instanceof InventoryScreen) {
+            sortPlayerInventory();
+        }
+
+        if (event.screen instanceof HandledScreen<?>
+                && !(event.screen instanceof InventoryScreen)
+                && (ctSortOnOpen.get() || ctRestock.get())) {
+            containerPending = true;
+        }
+    }
+
+    // ── Sort dispatcher (sort-key keybind) ───────────────────────────
 
     private void doSort() {
         if (mc.player == null) return;
@@ -174,55 +204,10 @@ public class InventoryManager extends Module {
             if (containerSize > 0) {
                 SortUtils.sortSlotRange(handler, 0, containerSize - 1);
                 SortUtils.mergeStacks(handler, 0, containerSize - 1);
-                // Sort the player main inventory portion visible in this screen
                 SortUtils.sortSlotRange(handler, containerSize, containerSize + 26);
                 SortUtils.mergeStacks(handler, containerSize, containerSize + 26);
             }
             info("Container & inventory sorted.");
-        }
-    }
-
-    // ── Events ───────────────────────────────────────────────────────
-
-    @EventHandler
-    private void onTick(TickEvent.Post event) {
-        if (mc.player == null) return;
-
-        // Continuous inventory sort
-        if (invSort.get() && invContinuous.get()) {
-            if (++tickCounter >= invDelay.get()) {
-                tickCounter = 0;
-                sortPlayerInventory();
-            }
-        }
-
-        // Respawn loadout trigger
-        if (pvpOnRespawn.get() && (pvpEquipArmor.get() || pvpArrangeHotbar.get())) {
-            boolean isDead = mc.player.isDead() || mc.player.getHealth() <= 0;
-            if (wasDead && !isDead) applyPvpLoadout();
-            wasDead = isDead;
-        }
-
-        // Container sort (deferred one tick from OpenScreenEvent)
-        if (containerPending) {
-            containerPending = false;
-            handleContainerSort();
-        }
-    }
-
-    @EventHandler
-    private void onOpenScreen(OpenScreenEvent event) {
-        if (mc.player == null) return;
-
-        if (invSort.get() && invSortOnOpen.get()
-                && event.screen instanceof InventoryScreen) {
-            sortPlayerInventory();
-        }
-
-        if (event.screen instanceof HandledScreen<?>
-                && !(event.screen instanceof InventoryScreen)
-                && (ctSortOnOpen.get() || ctRestock.get())) {
-            containerPending = true;
         }
     }
 
@@ -247,7 +232,6 @@ public class InventoryManager extends Module {
         PlayerScreenHandler handler = mc.player.playerScreenHandler;
         int syncId = handler.syncId;
 
-        // PlayerScreenHandler armor slots: 5=helmet 6=chestplate 7=leggings 8=boots
         EquipmentSlot[] slots = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET};
         int[] screenSlots = {5, 6, 7, 8};
 
@@ -285,11 +269,9 @@ public class InventoryManager extends Module {
             SlotType desired = hotbarSlots.get(hotbarIdx).get();
             if (desired == SlotType.EMPTY || desired == SlotType.AUTO) continue;
 
-            // Screen slot 36-44 = hotbar slots 0-8
             ItemStack current = handler.getSlot(36 + hotbarIdx).getStack();
             if (!current.isEmpty() && matchesSlotType(current, desired)) continue;
 
-            // Search main inventory (screen slots 9-35) for a matching item
             int foundSlot = -1;
             for (int i = 9; i <= 35; i++) {
                 ItemStack candidate = handler.getSlot(i).getStack();
@@ -300,7 +282,6 @@ public class InventoryManager extends Module {
             }
             if (foundSlot == -1) continue;
 
-            // SWAP: moves item at foundSlot into hotbar slot hotbarIdx
             SortUtils.interact(syncId, foundSlot, hotbarIdx, SlotActionType.SWAP);
         }
     }
@@ -328,7 +309,6 @@ public class InventoryManager extends Module {
         ScreenHandler handler = mc.player.currentScreenHandler;
         if (handler == null || handler instanceof PlayerScreenHandler) return;
 
-        // Container slots = total slots minus the 36 player inventory slots
         int containerSize = handler.slots.size() - 36;
         if (containerSize <= 0) return;
 
