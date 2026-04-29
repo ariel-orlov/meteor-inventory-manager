@@ -1,6 +1,6 @@
 package com.example.addon.modules;
 
-import com.example.addon.AddonTemplate;
+import com.example.addon.InventoryManagerAddon;
 import com.example.addon.utils.SortUtils;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -175,7 +175,7 @@ public class InventoryManager extends Module {
     private boolean containerPending = false;
 
     public InventoryManager() {
-        super(AddonTemplate.CATEGORY, "inventory-manager",
+        super(InventoryManagerAddon.CATEGORY, "inventory-manager",
             "Sort inventory/containers, manage PvP loadout, deposit & trash. Bind sort-key to sort on demand.");
 
         for (int i = 0; i < 9; i++) {

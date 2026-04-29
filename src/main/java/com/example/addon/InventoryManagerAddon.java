@@ -8,7 +8,7 @@ import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import org.slf4j.Logger;
 
-public class AddonTemplate extends MeteorAddon {
+public class InventoryManagerAddon extends MeteorAddon {
     public static final Logger LOG = LogUtils.getLogger();
     public static final Category CATEGORY = new Category("Inventory");
 
@@ -30,6 +30,6 @@ public class AddonTemplate extends MeteorAddon {
 
     @Override
     public GithubRepo getRepo() {
-        return new GithubRepo("ariel-orlov", "meteor-addon-template");
+        return new GithubRepo("ariel-orlov", "meteor-inventory-manager");
     }
 }

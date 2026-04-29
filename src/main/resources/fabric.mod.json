@@ -1,27 +1,28 @@
 {
   "schemaVersion": 1,
-  "id": "addon-template",
+  "id": "inventory-manager",
   "version": "${version}",
-  "name": "Addon Template",
-  "description": "An addon template for Meteor Client addons.",
+  "name": "Inventory Manager",
+  "description": "Smart inventory automation for Meteor Client — auto-sort, PvP loadout, quick deposit, auto-trash, and more.",
   "authors": [
-    "seasnail"
+    "ariel-orlov"
   ],
   "contact": {
-    "sources": "https://github.com/MeteorDevelopment/meteor-addon-template"
+    "homepage": "https://github.com/ariel-orlov/meteor-inventory-manager",
+    "sources": "https://github.com/ariel-orlov/meteor-inventory-manager"
   },
   "icon": "assets/template/icon.png",
   "environment": "client",
   "entrypoints": {
     "meteor": [
-      "com.example.addon.AddonTemplate"
+      "com.example.addon.InventoryManagerAddon"
     ]
   },
   "mixins": [
-    "addon-template.mixins.json"
+    "inventory-manager.mixins.json"
   ],
   "custom": {
-    "meteor-client:color": "225,25,25",
+    "meteor-client:color": "80,180,255",
     "modmenu": {
       "parent": {
         "id": "meteor-client"

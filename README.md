@@ -1,140 +1,89 @@
-# Meteor Addon Template
+# Inventory Manager — Meteor Client Addon
 
-A template to allow easy usage of the Meteor Addon API.
+A smart inventory automation addon for [Meteor Client](https://meteorclient.com).  
+Auto-sort, PvP loadout, quick deposit, inventory-full warnings, and auto-trash — all configurable and server-safe.
 
-### How to use
+---
 
-#### Use GitHub Template (Recommended)
+## Features
 
-- Click the green `Use this template` button in the top right corner of this page.  
-  This will create a new repository with this template and a clean history.
+### Inventory Sorter
+Sorts your inventory by item category (armor → sword → axe → bow → shields → potions → food → tools → blocks → misc), then alphabetically within each category, with larger stacks first.
 
-#### Clone Manually
+- **Sort Key** — bind a key to sort on demand; fires even with a container screen open
+- **Sort on Inventory Open** — automatically sorts when you open your player inventory
+- **Sort Hotbar** — optionally sort the hotbar (9 slots) as a separate pass
+- **Continuous Sort** — re-sort every N ticks (configurable)
+- **Actions Per Tick** — throttle how many slot clicks are sent per tick (1–20, default 4) for server compatibility
 
-- Alternatively, clone this repository using these commands for a clean history:
-  ```bash
-  git clone --depth 1 https://github.com/MeteorDevelopment/meteor-addon-template your-addon-name
-  cd your-addon-name
-  rm -rf .git
-  git init
-  git add .
-  git commit -m "Initial commit from template"
-  ```
+### PvP Loadout
+- **Auto-Equip Best Armor** — automatically equips your best available armor set every second
+- **Arrange Hotbar** — assigns specific item types (sword, axe, bow, crossbow, totem, shield, food, potion, pickaxe) to chosen hotbar slots
+- **Apply on Respawn** — re-applies PvP loadout automatically when you respawn
 
-#### Development
+### Container Sorter
+When a chest, barrel, or other container is open:
+- **Sort on Container Open** — automatically sorts the container contents when opened
+- **Deposit Key** — bind a key to instantly shift-click all matching items from your inventory into the open container
+- **Auto-Restock** — refills your inventory from open containers (food, blocks, tools, potions)
 
-- Use this template to add custom modules, commands, HUDs, and other features to Meteor Client.
-- To test, run the `Minecraft Client` configuration in your IDE.
-  This will start a Minecraft client with the Meteor Client mod and your addon loaded.
-- To build, run the gradle `build` task. This will create a JAR file in the `build/libs` folder.
-    - Move the JAR file to the `mods` folder of your Minecraft installation, alongside the Meteor Client mod and run the
-      game.
+### Inventory Extras
+- **Inventory Full Warning** — sends a chat warning when your inventory reaches a configurable fullness threshold (with cooldown to avoid spam)
+- **Auto Trash** — automatically drops items whose IDs are in a comma-separated list (e.g. `rotten_flesh,gravel,flint`)
 
-### Updating to newer Minecraft versions
+---
 
-To update this template to a newer Minecraft version, follow these steps:
+## Installation
 
-1. Ensure a Meteor Client snapshot is available for the new Minecraft version.
-2. Update `gradle/libs.versions.toml` (the versions catalog):
-    - Set the version entries to the new versions. Common keys to update are:
-        - `versions.minecraft` - Minecraft version
-        - `versions.yarn-mappings` - Yarn mappings
-        - `versions.fabric-loader` - Fabric loader version
-        - `versions.meteor` - Meteor Client snapshot version
-    - If your addon depends on other libraries listed under the `[libraries]` section, update their versions there as
-      needed.
-    - After editing, refresh Gradle dependencies and rebuild your project in the IDE.
-3. Update Loom:
-    - Change the `loom` version in `gradle/libs.versions.toml` (the `versions.loom` entry) to the latest version
-      compatible with the new Minecraft version.
-4. Update the Gradle wrapper:
-    - Run the wrapper update command for your platform. Examples:
-      - Unix / macOS / Windows (Powershell): `./gradlew wrapper --gradle-version <version> && ./gradlew wrapper`
-      - Windows (cmd.exe): `gradlew.bat wrapper --gradle-version <version> && gradlew.bat wrapper`
-    - This updates and regenerates the Gradle Wrapper scripts (`gradlew`, `gradlew.bat`, etc.) for the specified version.
-5. Update your source code:
-    - Adjust for Minecraft or Yarn mapping changes: method names, imports, mixins, etc.
-    - Check for Meteor Client API changes that may affect your addon by comparing against the
-      [master branch](https://github.com/MeteorDevelopment/meteor-client/tree/master).
-6. Build and test:
-    - Run the gradle `build` task.
-    - Confirm the build succeeds and your addon works with the new Minecraft version.
+1. Install [Fabric Loader](https://fabricmc.net/use/) for your Minecraft version
+2. Install [Meteor Client](https://meteorclient.com/download) (matching MC version)
+3. Download the latest `inventory-manager-*.jar` from [Releases](https://github.com/ariel-orlov/meteor-inventory-manager/releases)
+4. Place the JAR in your `.minecraft/mods/` folder
+5. Launch Minecraft — the **Inventory** category will appear in Meteor's module list
 
-### Project structure
+---
 
-```text
-.
-│── .github
-│   ╰── workflows
-│       │── dev_build.yml
-│       ╰── pull_request.yml
-│── gradle
-│   │── libs.versions.toml
-│   ╰── wrapper
-│       │── gradle-wrapper.jar
-│       ╰── gradle-wrapper.properties
-│── src
-│   ╰── main
-│       │── java
-│       │   ╰── com
-│       │       ╰── example
-│       │           ╰── addon
-│       │               │── commands
-│       │               │   ╰── CommandExample
-│       │               │── hud
-│       │               │   ╰── HudExample
-│       │               │── modules
-│       │               │   ╰── ModuleExample
-│       │               ╰── AddonTemplate
-│       ╰── resources
-│           │── assets
-│           │   ╰── template
-│           │       ╰── icon.png
-│           │── addon-template.mixins.json
-│           ╰── fabric.mod.json
-│── .editorconfig
-│── .gitignore
-│── build.gradle.kts
-│── gradle.properties
-│── gradlew
-│── gradlew.bat
-│── LICENSE
-│── README.md
-╰── settings.gradle.kts
+## Requirements
+
+| Dependency | Version |
+|---|---|
+| Minecraft | 1.21.8 |
+| Meteor Client | 1.21.8-SNAPSHOT or newer |
+| Fabric Loader | 0.19.2+ |
+| Java | 21+ |
+
+---
+
+## Building from Source
+
+```bash
+git clone https://github.com/ariel-orlov/meteor-inventory-manager
+cd meteor-inventory-manager
+./gradlew build
 ```
 
-This is the default project structure. Each folder/file has a specific purpose.  
-Here is a brief explanation of the ones you might need to modify:
+The output JAR will be in `build/libs/`.
 
-- `.github/workflows`: Contains the GitHub Actions configuration files.
-- `gradle`: Contains the Gradle wrapper files and the versions catalog.  
-  - `libs.versions.toml`: Defines version numbers for Minecraft, Loom, Meteor, and other dependencies.
-  - `wrapper`: Contains the Gradle wrapper executable files.  
-    To update the Gradle wrapper executable itself, run the wrapper update command (examples are shown above).
-- `src/main/java/com/example/addon`: Contains the main class of the addon.  
-  Here you can register your custom commands, modules, and HUDs.  
-  Edit the `getPackage` method to reflect the package of your addon.
-- `src/main/resources`: Contains the resources of the addon.
-    - `assets`: Contains the assets of the addon.  
-      You can add your own assets here, separated in subfolders.
-        - `template`: Contains the assets of the template.  
-          You can replace the `icon.png` file with your own addon icon.  
-          Also, rename this folder to reflect the name of your addon.
-    - `addon-template.mixins.json`: Contains the Mixin configuration for the addon.  
-      You can add your own mixins in the `client` array.
-    - `fabric.mod.json`: Contains the metadata of the addon.  
-      Edit the various fields to reflect the metadata of your addon.
-- `build.gradle.kts`: Contains the Gradle build script.  
-  You can manage the dependencies of the addon here.  
-  Remember to keep the `fabric-loom` version up-to-date.
-- `gradle.properties`: Contains additional build properties used by the build script
-  (for example `maven_group` and `archives_base_name`).  
-  Dependency and platform version numbers are stored in `gradle/libs.versions.toml`.
-- `LICENSE`: Contains the license of the addon.  
-  You can edit this file to change the license of your addon.
-- `README.md`: Contains the documentation of the addon.  
-  You can edit this file to reflect the documentation of your addon, and showcase its features.
+---
+
+## Configuration
+
+All settings are in Meteor's GUI under **Modules → Inventory → Inventory Manager**.  
+Settings are grouped into four sections:
+
+| Group | Key settings |
+|---|---|
+| Inventory Sorter | Sort Key, Sort on Open, Sort Hotbar, Continuous Sort, Actions Per Tick |
+| PvP Loadout | Auto-Equip Armor, Arrange Hotbar, Apply on Respawn, hotbar slot assignments |
+| Container Sorter | Sort on Open, Deposit Key, Auto-Restock options |
+| Inventory Extras | Full Warning threshold, Auto Trash item list |
+
+### Server Safety
+The **Actions Per Tick** slider (default 4) limits how many slot interactions are sent each tick.  
+Lower values (1–2) are safer on strict anti-cheat servers; higher values (10–20) are faster on permissive servers.
+
+---
 
 ## License
 
-This template is available under the CC0 license. Feel free to use it for your own projects.
+[MIT](LICENSE)
