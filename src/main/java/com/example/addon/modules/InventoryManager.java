@@ -2,6 +2,7 @@ package com.example.addon.modules;
 
 import com.example.addon.InventoryManagerAddon;
 import com.example.addon.utils.SortUtils;
+import com.example.addon.utils.VersionCompat;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -15,8 +16,7 @@ import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.*;
 import net.minecraft.registry.Registries;
-import net.minecraft.screen.PlayerScreenHandler;
-import net.minecraft.screen.ScreenHandler;
+import net.minecraft.screen.*;
 import net.minecraft.screen.slot.SlotActionType;
 
 import java.util.*;
@@ -33,7 +33,7 @@ public class InventoryManager extends Module {
         SlotType.SHIELD, SlotType.TOTEM, SlotType.BLOCK
     };
 
-    // ── Inventory Sorter ─────────────────────────────────────────────
+    // ── Inventory Sorter ─────────────────────────────────────────────────────
     private final SettingGroup sgInv = settings.createGroup("Inventory Sorter");
 
     private final Setting<Keybind> sortKey = sgInv.add(new KeybindSetting.Builder()
@@ -45,19 +45,19 @@ public class InventoryManager extends Module {
 
     private final Setting<Boolean> invSortOnOpen = sgInv.add(new BoolSetting.Builder()
         .name("sort-on-open")
-        .description("Automatically sort your inventory whenever you open it.")
+        .description("Automatically sort your inventory when you open it.")
         .defaultValue(true)
         .build());
 
     private final Setting<Boolean> sortHotbar = sgInv.add(new BoolSetting.Builder()
         .name("sort-hotbar")
-        .description("Also sort hotbar slots when sorting inventory.")
+        .description("Also sort hotbar slots (as a separate pass, items won't cross regions).")
         .defaultValue(false)
         .build());
 
     private final Setting<Boolean> invContinuous = sgInv.add(new BoolSetting.Builder()
         .name("continuous")
-        .description("Continuously re-sort your inventory while the module is on.")
+        .description("Continuously re-sort inventory while the module is on.")
         .defaultValue(false)
         .build());
 
@@ -70,16 +70,16 @@ public class InventoryManager extends Module {
 
     private final Setting<Integer> actionsPerTick = sgInv.add(new IntSetting.Builder()
         .name("actions-per-tick")
-        .description("Slot clicks sent per tick. Lower = safer on strict anti-cheat servers.")
+        .description("Slot clicks per tick. Lower = safer on strict anti-cheat servers (1–4 recommended).")
         .defaultValue(4).min(1).sliderMax(20)
         .build());
 
-    // ── PvP Loadout ──────────────────────────────────────────────────
+    // ── PvP Loadout ──────────────────────────────────────────────────────────
     private final SettingGroup sgPvp = settings.createGroup("PvP Loadout");
 
     private final Setting<Boolean> pvpEquipArmor = sgPvp.add(new BoolSetting.Builder()
         .name("equip-armor")
-        .description("Auto-equip best armor on activate and whenever better armor is picked up.")
+        .description("Auto-equip best armor on activate and every second while active.")
         .defaultValue(true)
         .build());
 
@@ -91,31 +91,31 @@ public class InventoryManager extends Module {
 
     private final Setting<Boolean> pvpOnRespawn = sgPvp.add(new BoolSetting.Builder()
         .name("on-respawn")
-        .description("Re-apply PvP loadout automatically on respawn.")
+        .description("Re-apply PvP loadout automatically after you respawn.")
         .defaultValue(false)
         .build());
 
     private final List<Setting<SlotType>> hotbarSlots = new ArrayList<>();
 
-    // ── Container Sorter ─────────────────────────────────────────────
+    // ── Container Sorter ─────────────────────────────────────────────────────
     private final SettingGroup sgContainer = settings.createGroup("Container Sorter");
 
     private final Setting<Boolean> ctSortOnOpen = sgContainer.add(new BoolSetting.Builder()
         .name("sort-on-open")
-        .description("Sort container contents when you open a chest/barrel/etc.")
+        .description("Sort container contents when you open a chest, barrel, shulker box, etc.")
         .defaultValue(true)
         .build());
 
     private final Setting<Keybind> depositKey = sgContainer.add(new KeybindSetting.Builder()
         .name("deposit-key")
-        .description("Press while a container is open to deposit matching items from your inventory.")
+        .description("While a container is open, press to shift-click matching items from your inventory into it.")
         .defaultValue(Keybind.none())
         .action(this::doDeposit)
         .build());
 
     private final Setting<Boolean> ctRestock = sgContainer.add(new BoolSetting.Builder()
         .name("restock")
-        .description("Pull matching items from container into your inventory when you open it.")
+        .description("Pull matching items from containers into your inventory when you open them.")
         .defaultValue(true)
         .build());
 
@@ -135,7 +135,7 @@ public class InventoryManager extends Module {
         .name("restock-blocks").description("Restock blocks.").defaultValue(false)
         .visible(() -> ctRestock.get()).build());
 
-    // ── Inventory Extras ─────────────────────────────────────────────
+    // ── Inventory Extras ─────────────────────────────────────────────────────
     private final SettingGroup sgExtras = settings.createGroup("Inventory Extras");
 
     private final Setting<Boolean> fullWarning = sgExtras.add(new BoolSetting.Builder()
@@ -146,7 +146,7 @@ public class InventoryManager extends Module {
 
     private final Setting<Integer> warnThreshold = sgExtras.add(new IntSetting.Builder()
         .name("warn-threshold")
-        .description("Free slots remaining before warning fires.")
+        .description("Free slots remaining that triggers the warning.")
         .defaultValue(3).min(1).sliderMax(10)
         .visible(() -> fullWarning.get())
         .build());
@@ -164,31 +164,32 @@ public class InventoryManager extends Module {
         .visible(() -> autoTrash.get())
         .build());
 
-    // ── State ────────────────────────────────────────────────────────
+    // ── State ────────────────────────────────────────────────────────────────
     private final MinecraftClient mc = MinecraftClient.getInstance();
     private final Queue<Runnable> actionQueue = new LinkedList<>();
-    private int tickCounter    = 0;
-    private int armorTimer     = 0;
-    private int warnCooldown   = 0;
-    private int trashCooldown  = 0;
-    private boolean wasDead    = false;
+    private int  tickCounter       = 0;
+    private int  armorTimer        = 0;
+    private int  warnCooldown      = 0;
+    private int  trashCooldown     = 0;
+    private boolean wasDead        = false;
     private boolean containerPending = false;
 
     public InventoryManager() {
         super(InventoryManagerAddon.CATEGORY, "inventory-manager",
-            "Sort inventory/containers, manage PvP loadout, deposit & trash. Bind sort-key to sort on demand.");
+            "Sort inventory/containers, manage PvP loadout, quick deposit, and auto-trash. " +
+            "Bind sort-key for on-demand sorting.");
 
         for (int i = 0; i < 9; i++) {
             hotbarSlots.add(sgPvp.add(new EnumSetting.Builder<SlotType>()
                 .name("slot-" + (i + 1))
-                .description("Item type for hotbar slot " + (i + 1) + ".")
+                .description("Desired item type for hotbar slot " + (i + 1) + ".")
                 .defaultValue(DEFAULT_HOTBAR[i])
                 .visible(() -> pvpArrangeHotbar.get())
                 .build()));
         }
     }
 
-    // ── Lifecycle ────────────────────────────────────────────────────
+    // ── Lifecycle ────────────────────────────────────────────────────────────
 
     @Override
     public void onActivate() {
@@ -203,19 +204,24 @@ public class InventoryManager extends Module {
     @Override
     public void onDeactivate() {
         actionQueue.clear();
+        tickCounter   = 0;
+        warnCooldown  = 0;
+        trashCooldown = 0;
+        armorTimer    = 0;
+        containerPending = false;
     }
 
-    // ── Events ───────────────────────────────────────────────────────
+    // ── Events ───────────────────────────────────────────────────────────────
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null) return;
 
-        // Drain action queue at configured rate (server-safe pacing)
+        // Drain action queue at configured rate
         for (int i = 0; i < actionsPerTick.get() && !actionQueue.isEmpty(); i++)
             actionQueue.poll().run();
 
-        // Continuous sort — only fires when queue is idle to avoid overlap
+        // Continuous sort — only when queue is idle to prevent overlap
         if (invContinuous.get() && actionQueue.isEmpty()) {
             if (++tickCounter >= invDelay.get()) {
                 tickCounter = 0;
@@ -223,7 +229,7 @@ public class InventoryManager extends Module {
             }
         }
 
-        // Auto-equip armor: check every second, only when queue is idle
+        // Auto-equip armor every second, queue-idle to avoid interfering with sort
         if (pvpEquipArmor.get() && actionQueue.isEmpty()) {
             if (++armorTimer >= 20) {
                 armorTimer = 0;
@@ -231,20 +237,20 @@ public class InventoryManager extends Module {
             }
         }
 
-        // Respawn loadout
+        // Respawn loadout re-apply
         if (pvpOnRespawn.get() && (pvpEquipArmor.get() || pvpArrangeHotbar.get())) {
             boolean isDead = mc.player.isDead() || mc.player.getHealth() <= 0;
             if (wasDead && !isDead) applyPvpLoadout();
             wasDead = isDead;
         }
 
-        // Deferred container sort (set one tick after OpenScreenEvent)
+        // Deferred container sort (must wait one tick after OpenScreenEvent)
         if (containerPending && actionQueue.isEmpty()) {
             containerPending = false;
             handleContainerSort();
         }
 
-        // Inventory full warning (max one warning per 10 seconds)
+        // Inventory full warning (cooldown: 10 seconds)
         if (fullWarning.get()) {
             if (warnCooldown > 0) {
                 warnCooldown--;
@@ -259,9 +265,9 @@ public class InventoryManager extends Module {
             }
         }
 
-        // Auto-trash: scan every 10 ticks
-        if (autoTrash.get()) {
-            if (trashCooldown-- <= 0) {
+        // Auto-trash: scan every 10 ticks, only when queue is idle
+        if (autoTrash.get() && actionQueue.isEmpty()) {
+            if (--trashCooldown <= 0) {
                 trashCooldown = 10;
                 dropTrashItems();
             }
@@ -274,6 +280,7 @@ public class InventoryManager extends Module {
 
         if (invSortOnOpen.get() && event.screen instanceof InventoryScreen) {
             actionQueue.clear();
+            tickCounter = 0; // reset continuous timer so it doesn't fire immediately after
             enqueuePlayerSort();
         }
 
@@ -284,44 +291,45 @@ public class InventoryManager extends Module {
         }
     }
 
-    // ── Sort ─────────────────────────────────────────────────────────
+    // ── Sort ─────────────────────────────────────────────────────────────────
 
     private void doSort() {
         if (mc.player == null) return;
         actionQueue.clear();
         tickCounter = 0;
+
         ScreenHandler handler = mc.player.currentScreenHandler;
-        if (handler instanceof PlayerScreenHandler || handler == null) {
+
+        if (handler instanceof PlayerScreenHandler) {
             enqueuePlayerSort();
             info("Sorting inventory...");
-        } else {
-            int csz = handler.slots.size() - 36;
-            if (csz > 0) {
-                // Container slots
-                SortUtils.enqueueSortRange(actionQueue, handler, 0, csz - 1);
-                SortUtils.enqueueMergeStacks(actionQueue, handler, 0, csz - 1);
-                // Player main inventory as seen in container screen
-                SortUtils.enqueueSortRange(actionQueue, handler, csz, csz + 26);
-                SortUtils.enqueueMergeStacks(actionQueue, handler, csz, csz + 26);
-            }
-            info("Sorting container & inventory...");
+            return;
         }
+
+        if (!isStorageContainer(handler)) {
+            info("Not a sortable container.");
+            return;
+        }
+
+        int csz = getContainerSize(handler);
+        // Sort container slots
+        SortUtils.enqueueSortAndMerge(actionQueue, handler, 0, csz - 1);
+        // Sort player main inventory visible in the container screen
+        SortUtils.enqueueSortAndMerge(actionQueue, handler, csz, csz + 26);
+        info("Sorting container and inventory...");
     }
 
     private void enqueuePlayerSort() {
         if (mc.player == null) return;
         PlayerScreenHandler h = mc.player.playerScreenHandler;
-        // Always sort main inventory (9-35)
-        SortUtils.enqueueSortRange(actionQueue, h, 9, 35);
-        SortUtils.enqueueMergeStacks(actionQueue, h, 9, 35);
-        // Optionally also sort hotbar (36-44) as a separate pass so items don't cross regions
-        if (sortHotbar.get()) {
-            SortUtils.enqueueSortRange(actionQueue, h, 36, 44);
-            SortUtils.enqueueMergeStacks(actionQueue, h, 36, 44);
-        }
+        // Main inventory (slots 9–35 in PlayerScreenHandler)
+        SortUtils.enqueueSortAndMerge(actionQueue, h, 9, 35);
+        // Hotbar (slots 36–44) as a separate pass — items won't cross regions
+        if (sortHotbar.get())
+            SortUtils.enqueueSortAndMerge(actionQueue, h, 36, 44);
     }
 
-    // ── PvP Loadout ──────────────────────────────────────────────────
+    // ── PvP Loadout ──────────────────────────────────────────────────────────
 
     private void applyPvpLoadout() {
         if (mc.player == null) return;
@@ -330,35 +338,38 @@ public class InventoryManager extends Module {
     }
 
     private void equipBestArmor() {
+        if (mc.player == null) return;
         PlayerScreenHandler handler = mc.player.playerScreenHandler;
         int syncId = handler.syncId;
 
-        EquipmentSlot[] slots      = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET};
+        // PlayerScreenHandler armor slot indices: HEAD=5, CHEST=6, LEGS=7, FEET=8
+        EquipmentSlot[] slots       = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET};
         int[]           screenSlots = {5, 6, 7, 8};
 
         for (int s = 0; s < 4; s++) {
-            EquipmentSlot eqSlot       = slots[s];
-            int           armorScreen  = screenSlots[s];
-            ItemStack     equipped     = handler.getSlot(armorScreen).getStack();
-            int           bestSlot     = -1;
-            int           bestScore    = SortUtils.scoreArmor(equipped);
+            EquipmentSlot target  = slots[s];
+            int           armSlot = screenSlots[s];
+            ItemStack     current = handler.getSlot(armSlot).getStack();
+            int           best    = SortUtils.scoreArmor(current);
+            int           bestSrc = -1;
 
-            for (int i = 9; i <= 35; i++) {
-                ItemStack candidate = handler.getSlot(i).getStack();
-                if (candidate.isEmpty()) continue;
-                var eq = candidate.get(DataComponentTypes.EQUIPPABLE);
-                if (eq == null || eq.slot() != eqSlot) continue;
-                int score = SortUtils.scoreArmor(candidate);
-                if (score > bestScore) { bestScore = score; bestSlot = i; }
+            for (int i = 9; i <= 44; i++) { // search both main inv and hotbar
+                ItemStack cand = handler.getSlot(i).getStack();
+                if (cand.isEmpty()) continue;
+                EquipmentSlot candSlot = VersionCompat.getEquipSlot(cand);
+                if (candSlot != target) continue;
+                int score = SortUtils.scoreArmor(cand);
+                if (score > best) { best = score; bestSrc = i; }
             }
 
-            if (bestSlot == -1) continue;
-            if (!equipped.isEmpty()) SortUtils.shiftClick(syncId, armorScreen);
-            SortUtils.shiftClick(syncId, bestSlot);
+            if (bestSrc == -1) continue;
+            if (!current.isEmpty()) SortUtils.shiftClick(syncId, armSlot);
+            SortUtils.shiftClick(syncId, bestSrc);
         }
     }
 
     private void arrangeHotbar() {
+        if (mc.player == null) return;
         PlayerScreenHandler handler = mc.player.playerScreenHandler;
         int syncId = handler.syncId;
 
@@ -375,6 +386,7 @@ public class InventoryManager extends Module {
                 if (!c.isEmpty() && matchesSlotType(c, desired)) { found = i; break; }
             }
             if (found == -1) continue;
+            // SWAP: moves the item at slot `found` to hotbar position `idx`
             SortUtils.interact(syncId, found, idx, SlotActionType.SWAP);
         }
     }
@@ -382,7 +394,7 @@ public class InventoryManager extends Module {
     private boolean matchesSlotType(ItemStack stack, SlotType type) {
         String id = Registries.ITEM.getId(stack.getItem()).getPath();
         return switch (type) {
-            case SWORD    -> id.endsWith("_sword");
+            case SWORD    -> id.endsWith("_sword") || id.equals("trident");
             case AXE      -> id.endsWith("_axe");
             case BOW      -> id.equals("bow");
             case CROSSBOW -> id.equals("crossbow");
@@ -396,16 +408,17 @@ public class InventoryManager extends Module {
         };
     }
 
-    // ── Container Sorter ─────────────────────────────────────────────
+    // ── Container Sorter ─────────────────────────────────────────────────────
 
     private void handleContainerSort() {
+        if (mc.player == null) return;
         ScreenHandler handler = mc.player.currentScreenHandler;
-        if (handler == null || handler instanceof PlayerScreenHandler) return;
-        int csz = handler.slots.size() - 36;
-        if (csz <= 0) return;
+        if (!isStorageContainer(handler)) return;
+
+        int csz = getContainerSize(handler);
 
         if (ctSortOnOpen.get())
-            SortUtils.enqueueSortRange(actionQueue, handler, 0, csz - 1);
+            SortUtils.enqueueSortAndMerge(actionQueue, handler, 0, csz - 1);
 
         if (ctRestock.get())
             restockFromContainer(handler, csz);
@@ -417,7 +430,7 @@ public class InventoryManager extends Module {
             ItemStack stack = handler.getSlot(i).getStack();
             if (stack.isEmpty()) continue;
 
-            String id  = Registries.ITEM.getId(stack.getItem()).getPath();
+            String id = Registries.ITEM.getId(stack.getItem()).getPath();
             SortUtils.ItemCategory cat = SortUtils.getCategory(stack);
             boolean take = switch (cat) {
                 case POTION -> ctRestockPotions.get();
@@ -434,27 +447,30 @@ public class InventoryManager extends Module {
         }
     }
 
-    // Deposit: shift-click player inventory items that match existing container stacks
     private void doDeposit() {
         if (mc.player == null) return;
         ScreenHandler handler = mc.player.currentScreenHandler;
-        if (handler instanceof PlayerScreenHandler || handler == null) {
-            info("Open a container to use deposit.");
+        if (!isStorageContainer(handler)) {
+            info("Open a storage container to use deposit.");
             return;
         }
-        int csz = handler.slots.size() - 36;
+        int csz = getContainerSize(handler);
         if (csz <= 0) return;
 
+        // Collect all item types already present in the container
         Set<Item> inContainer = new HashSet<>();
         for (int i = 0; i < csz; i++) {
             ItemStack s = handler.getSlot(i).getStack();
             if (!s.isEmpty()) inContainer.add(s.getItem());
         }
-        if (inContainer.isEmpty()) return;
+        if (inContainer.isEmpty()) {
+            info("Container is empty — nothing to deposit into.");
+            return;
+        }
 
         int syncId = handler.syncId;
         int count  = 0;
-        // Player main inventory sits at slots csz..csz+26 in the container screen
+        // Player main inventory occupies slots csz..(csz+26) in the container screen
         for (int i = csz; i < csz + 27; i++) {
             ItemStack s = handler.getSlot(i).getStack();
             if (!s.isEmpty() && inContainer.contains(s.getItem())) {
@@ -464,6 +480,7 @@ public class InventoryManager extends Module {
             }
         }
         if (count > 0) info("Depositing " + count + " stack(s)...");
+        else info("No matching items to deposit.");
     }
 
     private boolean playerHasItem(Item target) {
@@ -473,7 +490,7 @@ public class InventoryManager extends Module {
         return false;
     }
 
-    // ── Inventory Extras ─────────────────────────────────────────────
+    // ── Inventory Extras ─────────────────────────────────────────────────────
 
     private void dropTrashItems() {
         if (mc.player == null) return;
@@ -481,16 +498,44 @@ public class InventoryManager extends Module {
         if (raw.isEmpty()) return;
 
         Set<String> trash = new HashSet<>();
-        for (String e : raw.split(",")) trash.add(e.trim().toLowerCase());
+        for (String e : raw.split(",")) {
+            String trimmed = e.trim().toLowerCase();
+            if (!trimmed.isEmpty()) trash.add(trimmed);
+        }
+        if (trash.isEmpty()) return;
 
         PlayerScreenHandler handler = mc.player.playerScreenHandler;
         int syncId = handler.syncId;
-        // Only scan main inventory (9-35), never hotbar or armor
+        // Scan main inventory only (slots 9–35); never touch hotbar or armor
         for (int i = 9; i <= 35; i++) {
             ItemStack stack = handler.getSlot(i).getStack();
             if (stack.isEmpty()) continue;
-            if (trash.contains(Registries.ITEM.getId(stack.getItem()).getPath()))
-                SortUtils.interact(syncId, i, 1, SlotActionType.THROW); // button=1 drops whole stack
+            String id = Registries.ITEM.getId(stack.getItem()).getPath();
+            if (trash.contains(id))
+                SortUtils.interact(syncId, i, 1, SlotActionType.THROW); // button=1 throws full stack
         }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * Returns true for pure storage containers (chests, barrels, shulker boxes,
+     * hoppers, droppers/dispensers). Excludes workbench screens where slot indices
+     * aren't simple storage (anvils, furnaces, crafting tables, trades, etc.).
+     */
+    private boolean isStorageContainer(ScreenHandler handler) {
+        if (handler == null || handler instanceof PlayerScreenHandler) return false;
+        return handler instanceof GenericContainerScreenHandler   // 1–6 row chests, barrel, ender chest
+            || handler instanceof ShulkerBoxScreenHandler
+            || handler instanceof HopperScreenHandler
+            || handler instanceof Generic3x3ContainerScreenHandler; // dropper / dispenser
+    }
+
+    /**
+     * Returns the number of container-owned slots (total slots minus the 36 player slots
+     * that are always appended at the end of a storage screen handler).
+     */
+    private int getContainerSize(ScreenHandler handler) {
+        return handler.slots.size() - 36;
     }
 }
