@@ -37,7 +37,7 @@ When a chest, barrel, or other container is open:
 
 1. Install [Fabric Loader](https://fabricmc.net/use/) for your Minecraft version
 2. Install [Meteor Client](https://meteorclient.com/download) (matching MC version)
-3. Download the latest `inventory-manager-*.jar` from [Releases](https://github.com/ariel-orlov/meteor-inventory-manager/releases)
+3. Download the latest `inventory-manager-*.jar` from [**Releases**](https://github.com/ariel-orlov/meteor-inventory-manager/releases/latest)
 4. Place the JAR in your `.minecraft/mods/` folder
 5. Launch Minecraft — the **Inventory** category will appear in Meteor's module list
 
